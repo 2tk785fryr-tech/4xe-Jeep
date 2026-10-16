@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jeep 4xe Card Demo</title>
+<style>
+  :root {
+    --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
+    --secondary-background-color: #2a2a2a; --card-bg: #1c1c1c; --page-bg: #111;
+  }
+  body { margin: 0; padding: 16px; background: var(--page-bg); font-family: Roboto, -apple-system, system-ui, sans-serif; color: var(--primary-text-color); }
+  ha-card { display: block; background: var(--card-bg); border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  .controls button { background: #2a2a2a; color: inherit; border: 1px solid #444; border-radius: 16px; padding: 7px 12px; font: inherit; font-size: 14px; }
+  .controls button.on { border-color: #2fd47a; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <jeep-4xe-card id="card"></jeep-4xe-card>
+  <div class="controls" id="controls"></div>
+</div>
+<script src="../jeep-4xe-card.js"></script>
+<script>
+  const SCENARIOS = {
+    charging:   { vehicle: "on",  charger: "Charging",               dist: 501,  door: "closed", pos: 0 },
+    charged:    { vehicle: "on",  charger: "Waiting for car demand", dist: 498,  door: "closed", pos: 0 },
+    unplugged:  { vehicle: "on",  charger: "Ready",                  dist: 503,  door: "closed", pos: 0 },
+    paused:     { vehicle: "on",  charger: "Paused",                 dist: 702,  door: "closed", pos: 0 },
+    away:       { vehicle: "off", charger: "Ready",                  dist: 2430, door: "closed", pos: 0 },
+    away_open:  { vehicle: "off", charger: "Ready",                  dist: 2430, door: "open",   pos: 100 },
+    open_night: { vehicle: "on",  charger: "Charging",               dist: 501,  door: "open",   pos: 100, night: true },
+  };
+  const card = document.getElementById("card");
+  const params = new URLSearchParams(location.search);
+  card.setConfig({ show_status: params.has("status") });
+
+  function hassFor(s) {
+    const st = (state, attributes = {}) => ({ state, attributes });
+    return { states: {
+      "binary_sensor.garage_garage_door_vehicle_detected": st(s.vehicle),
+      "sensor.garage_garage_door_vehicle_distance_actual_filtered": st(String(s.dist), { unit_of_measurement: "mm" }),
+      "sensor.wallbox_pikachu_status_description": st(s.charger),
+      "cover.garage_garage_door_door": st(s.door, { current_position: s.pos }),
+      "sun.sun": st(s.night ? "below_horizon" : "above_horizon"),
+    } };
+  }
+  function show(name) {
+    card.hass = hassFor(SCENARIOS[name]);
+    document.querySelectorAll(".controls button").forEach(b => b.classList.toggle("on", b.dataset.s === name));
+  }
+  const controls = document.getElementById("controls");
+  for (const name of Object.keys(SCENARIOS)) {
+    const b = document.createElement("button");
+    b.textContent = name.replace("_", " ");
+    b.dataset.s = name;
+    b.onclick = () => show(name);
+    controls.append(b);
+  }
+  show(params.get("s") || "charging");
+</script>
+</body>
+</html>
