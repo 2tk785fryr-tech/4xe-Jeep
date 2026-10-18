@@ -1,10 +1,14 @@
+# Publishes a GitHub release (which HACS offers as an update) whenever
+# CARD_VERSION in jeep-4xe-card.js changes on main.
 name: Release
 
-# Pushing a tag like v1.2.0 publishes a GitHub release (which HACS offers as
-# an update) with the card attached. The tag must match CARD_VERSION.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths:
+      - jeep-4xe-card.js
+      - .github/workflows/release.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,22 +18,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check tag matches CARD_VERSION
+
+      - name: Read the card version
+        id: version
         run: |
-          version=$(sed -n 's/^const CARD_VERSION = "\(.*\)";/\1/p' jeep-4xe-card.js)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match CARD_VERSION $version" >&2
-            exit 1
-          fi
-      - name: Create release
+          v=$(grep -oP 'CARD_VERSION = "\K[^"]+' jeep-4xe-card.js)
+          test -n "$v"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release if it's new
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          # A release drafted in the GitHub UI already exists: just attach the card.
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" jeep-4xe-card.js --clobber
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "$TAG is already released"
             exit 0
           fi
-          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
-          gh release create "$GITHUB_REF_NAME" jeep-4xe-card.js --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "$TAG" jeep-4xe-card.js --target "$GITHUB_SHA" --title "$TAG" --generate-notes

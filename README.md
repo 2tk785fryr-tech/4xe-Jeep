@@ -30,9 +30,8 @@ Also shown:
 1. HACS → ⋮ → **Custom repositories** → add this repository's URL, type **Dashboard**.
 2. Install **Jeep 4xe Garage Card**, then reload the browser.
 
-HACS offers new versions from this repository's GitHub releases. To publish one, bump
-`CARD_VERSION` in `jeep-4xe-card.js` and push a matching tag (e.g. `v1.1.0`) on `main`; the
-Release workflow creates the release.
+HACS offers new versions from this repository's GitHub releases (see
+[Releasing an update](#releasing-an-update)).
 
 ### Manual
 
@@ -116,3 +115,10 @@ The keys are also in the visual editor under **Garage automation status (optiona
 ## Preview without Home Assistant
 
 Open `demo/index.html` in a browser; the buttons switch between states.
+
+## Releasing an update
+
+Raise `CARD_VERSION` at the top of `jeep-4xe-card.js` and push to `main`. The **Release** workflow
+(`.github/workflows/release.yml`) then publishes a GitHub release tagged with that version, e.g.
+`v1.1.0`, and HACS offers it as an update. Pushes that don't change the version don't make a
+release.
