@@ -32,10 +32,18 @@
     away:       { vehicle: "off", charger: "Ready",                  dist: 2430, door: "closed", pos: 0 },
     away_open:  { vehicle: "off", charger: "Ready",                  dist: 2430, door: "open",   pos: 100 },
     open_night: { vehicle: "on",  charger: "Charging",               dist: 501,  door: "open",   pos: 100, night: true },
+    automations: { vehicle: "on", charger: "Charging",               dist: 501,  door: "open",   pos: 100, auto: true },
   };
   const card = document.getElementById("card");
   const params = new URLSearchParams(location.search);
-  card.setConfig({ show_status: params.has("status") });
+  card.setConfig({
+    show_status: params.has("status"),
+    auto_hold_entity: "input_boolean.garage_auto_disabled",
+    unload_timer_entity: "timer.garage_unload_mode",
+    departure_timer_entity: "timer.garage_ready_to_leave",
+    open_ceiling_automation: "automation.garage_open_ceiling",
+    last_action_automations: ["automation.garage_auto_open_carplay_zone", "automation.garage_open_ceiling"],
+  });
 
   function hassFor(s) {
     const st = (state, attributes = {}) => ({ state, attributes });
@@ -45,7 +53,21 @@
       "sensor.wallbox_pikachu_status_description": st(s.charger),
       "cover.garage_garage_door_door": st(s.door, { current_position: s.pos }),
       "sun.sun": st(s.night ? "below_horizon" : "above_horizon"),
+      ...(s.auto ? automationStates() : {}),
     } };
+  }
+  function automationStates() {
+    const now = Date.now();
+    const iso = (ms) => new Date(ms).toISOString();
+    const st = (state, attributes = {}, extra = {}) => ({ state, attributes, ...extra });
+    return {
+      "cover.garage_garage_door_door": st("open", { current_position: 100 }, { last_changed: iso(now - 7 * 60000) }),
+      "input_boolean.garage_auto_disabled": st("on"),
+      "timer.garage_unload_mode": st("active", { finishes_at: iso(now + 272000) }),
+      "timer.garage_ready_to_leave": st("paused", { remaining: "0:01:05" }),
+      "automation.garage_open_ceiling": st("on", { friendly_name: "Garage Open Ceiling", current: 1, last_triggered: iso(now - 7 * 60000 - 2000) }),
+      "automation.garage_auto_open_carplay_zone": st("on", { friendly_name: "Garage Auto-Open (CarPlay + Zone)", last_triggered: iso(now - 7 * 60000 - 14000) }),
+    };
   }
   function show(name) {
     card.hass = hassFor(SCENARIOS[name]);

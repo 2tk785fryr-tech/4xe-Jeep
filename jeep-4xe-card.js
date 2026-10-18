@@ -6,7 +6,7 @@
  * Home Assistant.
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.1.0";
 
 const DEFAULTS = {
   vehicle_entity: "binary_sensor.garage_garage_door_vehicle_detected",
@@ -23,7 +23,18 @@ const DEFAULTS = {
   distance_decimals: 1,
   body_color: "#2f4c37",
   flare_color: "",
+  // Garage automation status section (all off unless an entity is set).
+  unload_timer_entity: "",
+  departure_timer_entity: "",
+  auto_hold_entity: "",
+  open_ceiling_automation: "",
+  open_ceiling_minutes: 25,
+  last_action_automations: [],
 };
+
+// The door move is attributed to an automation that triggered at most this
+// long before the door's last state change.
+const LAST_MOVE_WINDOW_MS = 120 * 1000;
 
 // Wallbox status descriptions -> card state.
 //   glow:    haze colour behind the Jeep
@@ -389,6 +400,53 @@ const ICON_GARAGE_OPEN = "M19,20H17V11H7V20H5V9L12,5L19,9V20M8,12H16V14H8V12Z";
 const ICON_RULER = "M12,2L7,7H10.5V17H7L12,22L17,17H13.5V7H17L12,2Z";
 const ICON_PLUG = "M16,7V3H14V7H10V3H8V7C7,7 6,8 6,9V14.5L9.5,18V21H14.5V18L18,14.5V9C18,8 17,7 16,7Z";
 
+const ICON_TIMER = "M12,20A7,7 0 0,1 5,13A7,7 0 0,1 12,6A7,7 0 0,1 19,13A7,7 0 0,1 12,20M19.03,7.39L20.45,5.97C20,5.46 19.55,5 19.04,4.56L17.62,6C16.07,4.74 14.12,4 12,4A9,9 0 0,0 3,13A9,9 0 0,0 12,22C17,22 21,17.97 21,13C21,10.88 20.26,8.93 19.03,7.39M11,14H13V8H11M15,1H9V3H15V1Z";
+const ICON_ALERT = "M13,14H11V10H13M13,18H11V16H13M1,21H23L12,2L1,21Z";
+const ICON_HISTORY = "M13.5,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8M13,3A9,9 0 0,0 4,12H1L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,20 10.5,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3Z";
+
+function parseTime(value) {
+  if (typeof value !== "string" || !value) return null;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : null;
+}
+
+// Timer "remaining" attribute: "0:04:12", "1:00:00" or "1 day, 2:00:00".
+function parseDuration(value) {
+  if (typeof value !== "string") return null;
+  const m = value.trim().match(/^(?:(\d+)\s+days?,\s*)?(\d+):(\d{1,2}):(\d{1,2})(?:\.\d+)?$/);
+  if (!m) return null;
+  return Number(m[1] || 0) * 86400 + Number(m[2]) * 3600 + Number(m[3]) * 60 + Number(m[4]);
+}
+
+function formatCountdown(totalSeconds) {
+  const secs = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = String(secs % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+function formatAgo(ms) {
+  const sec = Math.max(0, ms / 1000);
+  if (sec < 45) return "just now";
+  const min = Math.max(1, Math.round(sec / 60));
+  if (min < 90) return `${min} min ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 36) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} d ago`;
+}
+
+function shortName(st) {
+  const name = st.attributes?.friendly_name;
+  const text = typeof name === "string" && name.trim() ? name.trim() : st.entity_id.split(".").pop();
+  return text.replace(/^garage\s+/i, "");
+}
+
+function entityList(value) {
+  if (typeof value === "string") return value ? [value] : [];
+  return Array.isArray(value) ? value.filter((v) => typeof v === "string" && v) : [];
+}
+
 function icon(path) {
   return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
 }
@@ -474,6 +532,25 @@ const STYLE = `
   .chip.status .dot { background: var(--glow-color, #888); }
   .hidden { display: none !important; }
 
+  .auto { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+  .auto .warn {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px;
+    background: rgba(255,159,26,.16); border: 1px solid rgba(255,159,26,.55);
+    color: var(--primary-text-color); font-size: .9rem; font-weight: 600; line-height: 1.25;
+  }
+  .auto .warn .icon { width: 20px; height: 20px; fill: #ff9f1a; flex: none; }
+  .auto-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .auto .chip { white-space: normal; }
+  .chip.timer .icon { color: #2f8fff; }
+  .chip.timer .value { font-variant-numeric: tabular-nums; }
+  .chip.timer.paused .icon { color: var(--secondary-text-color); }
+  .auto .chip.open-for { display: block; border-radius: 14px; }
+  .chip.open-for .icon { color: #ff9f1a; display: inline-block; vertical-align: -4px; margin-right: 6px; }
+  .chip.open-for .value { white-space: nowrap; }
+  .chip .note { color: var(--secondary-text-color); }
+  .last-move { display: flex; align-items: center; gap: 6px; padding: 0 2px; font-size: .82rem; color: var(--secondary-text-color); line-height: 1.25; }
+  .last-move .icon { width: 16px; height: 16px; fill: currentColor; flex: none; }
+
   @media (max-width: 420px) {
     .chip { font-size: .82rem; padding: 5px 9px; }
   }
@@ -489,6 +566,8 @@ class Jeep4xeCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._lastGood = {};
     this._recheckTimer = null;
+    this._tick = null;
+    this._tickPeriod = 0;
   }
 
   static getStubConfig() {
@@ -524,6 +603,20 @@ class Jeep4xeCard extends HTMLElement {
         },
         { name: "body_color", selector: { text: {} } },
         { name: "flare_color", selector: { text: {} } },
+        {
+          type: "expandable",
+          name: "",
+          flatten: true,
+          title: "Garage automation status (optional)",
+          schema: [
+            { name: "auto_hold_entity", selector: { entity: { domain: "input_boolean" } } },
+            { name: "unload_timer_entity", selector: { entity: { domain: "timer" } } },
+            { name: "departure_timer_entity", selector: { entity: { domain: "timer" } } },
+            { name: "open_ceiling_automation", selector: { entity: { domain: "automation" } } },
+            { name: "open_ceiling_minutes", selector: { number: { min: 1, max: 240, step: 1, unit_of_measurement: "min", mode: "box" } } },
+            { name: "last_action_automations", selector: { entity: { domain: "automation", multiple: true } } },
+          ],
+        },
       ],
       computeLabel: (s) => ({
         title: "Title (optional)",
@@ -540,6 +633,12 @@ class Jeep4xeCard extends HTMLElement {
         distance_decimals: "Distance decimals",
         body_color: "Body colour (hex)",
         flare_color: "Fender flare colour (blank = body colour)",
+        auto_hold_entity: "Automations paused switch",
+        unload_timer_entity: "Unload mode timer",
+        departure_timer_entity: "Departure timer",
+        open_ceiling_automation: "Open-ceiling auto-close automation",
+        open_ceiling_minutes: "Nominal open limit",
+        last_action_automations: "Automations that move the door (for \"Last move\")",
       }[s.name]),
     };
   }
@@ -566,6 +665,7 @@ class Jeep4xeCard extends HTMLElement {
   disconnectedCallback() {
     clearTimeout(this._recheckTimer);
     this._recheckTimer = null;
+    this._setTick(0);
   }
 
   connectedCallback() {
@@ -574,6 +674,7 @@ class Jeep4xeCard extends HTMLElement {
 
   _build() {
     const c = this._config;
+    this._setTick(0);
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <ha-card>
@@ -595,6 +696,15 @@ class Jeep4xeCard extends HTMLElement {
           <span class="chip door">${icon(ICON_GARAGE_CLOSED)}<span class="label">Door</span><span class="value"></span></span>
           <span class="chip status">${icon(ICON_PLUG)}<span class="dot"></span><span class="value"></span></span>
         </div>
+        <div class="auto hidden">
+          <div class="warn hidden" role="status">${icon(ICON_ALERT)}<span>Garage automations paused</span></div>
+          <div class="auto-chips hidden">
+            <span class="chip timer unload hidden">${icon(ICON_TIMER)}<span class="label">Unload mode</span><span class="value"></span></span>
+            <span class="chip timer departure hidden">${icon(ICON_TIMER)}<span class="label">Departure</span><span class="value"></span></span>
+            <span class="chip open-for hidden">${icon(ICON_GARAGE_OPEN)}<span class="value"></span><span class="note"></span></span>
+          </div>
+          <div class="last-move hidden">${icon(ICON_HISTORY)}<span class="value"></span></div>
+        </div>
       </ha-card>`;
     if (c.title) this.shadowRoot.querySelector(".title").textContent = c.title;
 
@@ -607,6 +717,13 @@ class Jeep4xeCard extends HTMLElement {
       distChip: this.shadowRoot.querySelector(".chip.distance"),
       doorChip: this.shadowRoot.querySelector(".chip.door"),
       statusChip: this.shadowRoot.querySelector(".chip.status"),
+      auto: this.shadowRoot.querySelector(".auto"),
+      warn: this.shadowRoot.querySelector(".auto .warn"),
+      autoChips: this.shadowRoot.querySelector(".auto-chips"),
+      unload: this.shadowRoot.querySelector(".chip.unload"),
+      departure: this.shadowRoot.querySelector(".chip.departure"),
+      openFor: this.shadowRoot.querySelector(".chip.open-for"),
+      lastMove: this.shadowRoot.querySelector(".last-move"),
     };
 
     const body = c.body_color || DEFAULTS.body_color;
@@ -732,6 +849,139 @@ class Jeep4xeCard extends HTMLElement {
     this._els.title.textContent = present
       ? `Jeep in garage — ${info.label}. Distance ${distText}. Door ${doorText}.`
       : `Garage empty. Distance to floor ${distText}. Door ${doorText}.`;
+
+    this._renderAuto();
+  }
+
+  // Entity state for the automation section, or null when it is missing,
+  // unknown or unavailable (those rows are hidden, never shown as text).
+  _avail(entityId) {
+    if (typeof entityId !== "string" || !entityId) return null;
+    const st = this._hass?.states?.[entityId];
+    if (!st || st.state === "unknown" || st.state === "unavailable") return null;
+    return st;
+  }
+
+  _renderAuto() {
+    if (!this._hass || !this._config || !this._els?.auto) return;
+    try {
+      this._renderAutoRows();
+    } catch (err) {
+      this._els.auto.classList.add("hidden");
+      this._setTick(0);
+      if (!this._autoErrorLogged) {
+        this._autoErrorLogged = true;
+        console.warn("jeep-4xe-card: automation status hidden", err);
+      }
+    }
+  }
+
+  _renderAutoRows() {
+    const c = this._config;
+    const now = Date.now();
+    const els = this._els;
+    let liveTimer = false;
+    let relativeRows = false;
+
+    const hold = this._avail(c.auto_hold_entity);
+    els.warn.classList.toggle("hidden", hold?.state !== "on");
+
+    for (const [el, entityId] of [[els.unload, c.unload_timer_entity], [els.departure, c.departure_timer_entity]]) {
+      const t = this._timerText(this._avail(entityId), now);
+      el.classList.toggle("hidden", !t);
+      if (!t) continue;
+      el.classList.toggle("paused", t.paused);
+      el.querySelector(".value").textContent = t.text;
+      liveTimer = liveTimer || t.live;
+    }
+
+    // How long the door has been open. No countdown: pressing Extend restarts
+    // the automation's delay, so the real close time can't be observed.
+    let openText = null;
+    let openNote = "";
+    if (c.open_ceiling_automation) {
+      const auto = this._avail(c.open_ceiling_automation);
+      const door = this._avail(c.door_entity);
+      const since = parseTime(door?.last_changed);
+      if (auto && door?.state === "open" && since != null) {
+        openText = `Open ${Math.max(0, Math.floor((now - since) / 60000))} min`;
+        if (Number(auto.attributes?.current) > 0) {
+          const limit = Number(c.open_ceiling_minutes);
+          openNote = " · auto-close watching";
+          if (Number.isFinite(limit) && limit > 0) openNote += ` · limit ~${limit} min (Extend resets)`;
+        }
+      }
+    }
+    els.openFor.classList.toggle("hidden", !openText);
+    if (openText) {
+      els.openFor.querySelector(".value").textContent = openText;
+      els.openFor.querySelector(".note").textContent = openNote;
+      relativeRows = true;
+    }
+
+    const lastMove = this._lastMoveText(now);
+    els.lastMove.classList.toggle("hidden", !lastMove);
+    if (lastMove) {
+      els.lastMove.querySelector(".value").textContent = lastMove;
+      relativeRows = true;
+    }
+
+    const chipsShown = [els.unload, els.departure, els.openFor].some((el) => !el.classList.contains("hidden"));
+    els.autoChips.classList.toggle("hidden", !chipsShown);
+    const anyShown = chipsShown || !els.warn.classList.contains("hidden") || !!lastMove;
+    els.auto.classList.toggle("hidden", !anyShown);
+
+    // Tick every second only while a timer is counting down; otherwise just
+    // keep "N min" / "N min ago" fresh.
+    this._setTick(liveTimer ? 1000 : relativeRows ? 30000 : 0);
+  }
+
+  _timerText(st, now) {
+    if (!st) return null;
+    const attrs = st.attributes || {};
+    if (st.state === "active") {
+      const finishes = parseTime(attrs.finishes_at);
+      if (finishes != null) return { text: formatCountdown(Math.ceil((finishes - now) / 1000)), live: true, paused: false };
+      const remaining = parseDuration(attrs.remaining);
+      return remaining == null ? null : { text: formatCountdown(remaining), live: false, paused: false };
+    }
+    if (st.state === "paused") {
+      const remaining = parseDuration(attrs.remaining);
+      return remaining == null ? null : { text: `${formatCountdown(remaining)} · paused`, live: false, paused: true };
+    }
+    return null;
+  }
+
+  // Attribute the door's last state change to the listed automation that
+  // triggered closest before it (within LAST_MOVE_WINDOW_MS). A miss is not
+  // proof of a manual move: last_changed also resets when HA restarts.
+  _lastMoveText(now) {
+    const ids = entityList(this._config.last_action_automations);
+    if (!ids.length) return null;
+    const door = this._avail(this._config.door_entity);
+    const changed = parseTime(door?.last_changed);
+    const autos = ids.map((id) => this._avail(id)).filter(Boolean);
+    if (changed == null || !autos.length) return null;
+    let best = null;
+    let bestGap = Infinity;
+    for (const st of autos) {
+      const triggered = parseTime(st.attributes?.last_triggered);
+      if (triggered == null) continue;
+      const gap = changed - triggered;
+      if (gap >= 0 && gap <= LAST_MOVE_WINDOW_MS && gap < bestGap) {
+        best = st;
+        bestGap = gap;
+      }
+    }
+    return best ? `Last move: ${shortName(best)}, ${formatAgo(now - changed)}` : "Last move: manual or unknown";
+  }
+
+  _setTick(period) {
+    if (period === this._tickPeriod) return;
+    clearInterval(this._tick);
+    this._tick = null;
+    this._tickPeriod = period;
+    if (period > 0) this._tick = setInterval(() => this._renderAuto(), period);
   }
 }
 
