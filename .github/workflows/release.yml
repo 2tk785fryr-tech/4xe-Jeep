@@ -25,6 +25,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A release drafted in the GitHub UI already exists: just attach the card.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" jeep-4xe-card.js --clobber
+            exit 0
+          fi
           git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
           gh release create "$GITHUB_REF_NAME" jeep-4xe-card.js --title "$GITHUB_REF_NAME" --notes-file notes.md
