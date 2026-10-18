@@ -6,7 +6,7 @@
  * Home Assistant.
  */
 
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.1.1";
 
 const DEFAULTS = {
   vehicle_entity: "binary_sensor.garage_garage_door_vehicle_detected",
@@ -35,6 +35,14 @@ const DEFAULTS = {
 // The door move is attributed to an automation that triggered at most this
 // long before the door's last state change.
 const LAST_MOVE_WINDOW_MS = 120 * 1000;
+
+// The open-ceiling automation starts when the door opens (and again on
+// Extend), then closes it open_ceiling_minutes later via the safe-close
+// script, whose light-flash warning and obstruction backstop can add a few
+// minutes. So it only ever explains a close, landing in this window around
+// the limit after its last trigger.
+const CEILING_CLOSE_EARLY_MS = 60 * 1000;
+const CEILING_CLOSE_LATE_MS = 5 * 60 * 1000;
 
 // Wallbox status descriptions -> card state.
 //   glow:    haze colour behind the Jeep
@@ -953,22 +961,36 @@ class Jeep4xeCard extends HTMLElement {
   }
 
   // Attribute the door's last state change to the listed automation that
-  // triggered closest before it (within LAST_MOVE_WINDOW_MS). A miss is not
-  // proof of a manual move: last_changed also resets when HA restarts.
+  // triggered closest before it (within LAST_MOVE_WINDOW_MS). The
+  // open-ceiling automation is the exception: it starts as the door opens, so
+  // it would steal credit for every automatic open, and it closes the door
+  // long after it triggered. A miss is not proof of a manual move:
+  // last_changed also resets when HA restarts.
   _lastMoveText(now) {
-    const ids = entityList(this._config.last_action_automations);
+    const c = this._config;
+    const ids = entityList(c.last_action_automations);
     if (!ids.length) return null;
-    const door = this._avail(this._config.door_entity);
+    const door = this._avail(c.door_entity);
     const changed = parseTime(door?.last_changed);
     const autos = ids.map((id) => this._avail(id)).filter(Boolean);
     if (changed == null || !autos.length) return null;
+    const doorClosing = door.state === "closed" || door.state === "closing";
+    const limit = Number(c.open_ceiling_minutes);
+    const ceilingMs = (Number.isFinite(limit) && limit > 0 ? limit : DEFAULTS.open_ceiling_minutes) * 60000;
     let best = null;
     let bestGap = Infinity;
     for (const st of autos) {
       const triggered = parseTime(st.attributes?.last_triggered);
       if (triggered == null) continue;
+      let earliest = 0;
+      let latest = LAST_MOVE_WINDOW_MS;
+      if (c.open_ceiling_automation && st.entity_id === c.open_ceiling_automation) {
+        if (!doorClosing) continue;
+        earliest = ceilingMs - CEILING_CLOSE_EARLY_MS;
+        latest = ceilingMs + CEILING_CLOSE_LATE_MS;
+      }
       const gap = changed - triggered;
-      if (gap >= 0 && gap <= LAST_MOVE_WINDOW_MS && gap < bestGap) {
+      if (gap >= earliest && gap <= latest && gap < bestGap) {
         best = st;
         bestGap = gap;
       }

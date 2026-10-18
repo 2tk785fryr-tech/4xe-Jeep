@@ -77,7 +77,7 @@ Nothing in this section is clickable.
 | `departure_timer_entity` | `timer.garage_ready_to_leave` | Same as above, labelled **Departure**. |
 | `open_ceiling_automation` | `automation.garage_open_ceiling` | Only while the door is `open`: **Open N min** (from the door's `last_changed`). If the automation is running (`current` > 0) it adds "auto-close watching · limit ~25 min (Extend resets)". There is deliberately no countdown to close: Extend restarts the automation's clock, so the real deadline can't be observed. |
 | `open_ceiling_minutes` | `25` (default) | The nominal limit quoted in the line above. |
-| `last_action_automations` | list, see below | **Last move: Auto-Close After Parking, 3 min ago**. The door's last state change is credited to the listed automation whose `last_triggered` is closest to it and at most 120 s before it. Leading "Garage " is dropped from the name. With no match it says **Last move: manual or unknown**, never just "manual": the door's `last_changed` also resets when Home Assistant restarts. |
+| `last_action_automations` | list, see below | **Last move: Auto-Close After Parking, 3 min ago**. The door's last state change is credited to the listed automation whose `last_triggered` is closest to it and at most 120 s before it (the open-ceiling automation has its own rule, below). Leading "Garage " is dropped from the name. With no match it says **Last move: manual or unknown**, never just "manual": the door's `last_changed` also resets when Home Assistant restarts. |
 
 ```yaml
 type: custom:jeep-4xe-card
@@ -105,10 +105,16 @@ last_action_automations:
   - automation.garage_departure_button
 ```
 
-Known limitation of "Last move": `last_triggered` is when an automation *started*. An automation
-that is itself triggered by the door opening (such as the open-ceiling one) triggers moments before
-the door reaches `open`, so it can be credited with an open that another automation caused; and an
-automation that waits a long time before closing the door triggers too early to be matched.
+The automation set as `open_ceiling_automation` is matched differently, because it starts the
+moment the door opens and only closes the door about `open_ceiling_minutes` later. It is never
+credited with an open (so an automatic open goes to the automation that really caused it, such as
+CarPlay), and it is credited with a close only when the close lands between 1 minute before and
+5 minutes after `open_ceiling_minutes` from its last trigger (or Extend). Leave it out of the list
+if you never want it named.
+
+Known limitation: `last_triggered` is when an automation *started*. Any other automation that waits
+more than 120 s before moving the door triggers too early to be matched and shows as "manual or
+unknown".
 
 The keys are also in the visual editor under **Garage automation status (optional)**.
 
