@@ -118,6 +118,39 @@ unknown".
 
 The keys are also in the visual editor under **Garage automation status (optional)**.
 
+## Garage extras (optional, v1.2.0+)
+
+More optional keys, also off when absent. As above, an entity that is missing, `unknown` or
+`unavailable` simply adds nothing.
+
+| Key | Example | What it shows |
+|---|---|---|
+| `obstruction_entity` | `binary_sensor.garage_garage_door_obstruction` | When `on`: the door's safety-sensor beam is drawn across the bottom of the opening, flashing red, plus a red **Door blocked (obstruction sensor)** warning. |
+| `safe_close_script` | `script.garage_safe_close` | While the script runs (about 10 s while it flashes the light and closes): the opener on the ceiling flashes amber and an **Auto-closing…** warning shows. The door's own light is not used for this because it also stays on for minutes after every move. |
+| `light_entity` | `light.garage_garage_light` | A ceiling light is drawn. On: warm light fills the garage. Off: the garage is dimmer and the charger's light ring and the haze stand out. |
+| `laser_entity` | `switch.garage_garage_door_laser` | While on: the red parking-assist beam from the opener to its spot on the dashboard (or on the floor if the Jeep isn't there). |
+| `arriving_entity` | `binary_sensor.garage_garage_door_vehicle_arriving` | When it turns on, the Jeep drives into the garage over 4 s. |
+| `leaving_entity` | `binary_sensor.garage_garage_door_vehicle_leaving` | When it turns on, the Jeep backs out over 4 s. The animations follow the sensor's `last_changed`, so opening the dashboard part-way through doesn't replay them. |
+| `charging_power_entity` | `sensor.wallbox_pikachu_charging_power` | While plugged in, a charging line such as **7.2 kW · +4.6 kWh · +24 mi · ~$0.64**. Power is shown only while charging. Each part needs its own entity and is left out if that entity is missing. |
+| `added_energy_entity` | `sensor.wallbox_pikachu_added_energy` | The session's energy added. |
+| `added_range_entity` | `sensor.wallbox_pikachu_added_range` | The session's range added, in the sensor's unit. |
+| `energy_price_entity` | `sensor.wallbox_pikachu_energy_price` | Price per kWh; the cost is energy added × this price, in Home Assistant's currency. |
+
+```yaml
+obstruction_entity: binary_sensor.garage_garage_door_obstruction
+safe_close_script: script.garage_safe_close
+light_entity: light.garage_garage_light
+laser_entity: switch.garage_garage_door_laser
+arriving_entity: binary_sensor.garage_garage_door_vehicle_arriving
+leaving_entity: binary_sensor.garage_garage_door_vehicle_leaving
+charging_power_entity: sensor.wallbox_pikachu_charging_power
+added_energy_entity: sensor.wallbox_pikachu_added_energy
+added_range_entity: sensor.wallbox_pikachu_added_range
+energy_price_entity: sensor.wallbox_pikachu_energy_price
+```
+
+These are in the visual editor under **Garage extras (optional)**.
+
 ## Preview without Home Assistant
 
 Open `demo/index.html` in a browser; the buttons switch between states.

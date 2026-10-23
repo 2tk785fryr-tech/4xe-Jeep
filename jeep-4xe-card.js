@@ -6,7 +6,7 @@
  * Home Assistant.
  */
 
-const CARD_VERSION = "1.1.1";
+const CARD_VERSION = "1.2.0";
 
 const DEFAULTS = {
   vehicle_entity: "binary_sensor.garage_garage_door_vehicle_detected",
@@ -30,6 +30,17 @@ const DEFAULTS = {
   open_ceiling_automation: "",
   open_ceiling_minutes: 25,
   last_action_automations: [],
+  // Garage extras (all off unless an entity is set).
+  obstruction_entity: "",
+  safe_close_script: "",
+  light_entity: "",
+  laser_entity: "",
+  arriving_entity: "",
+  leaving_entity: "",
+  charging_power_entity: "",
+  added_energy_entity: "",
+  added_range_entity: "",
+  energy_price_entity: "",
 };
 
 // The door move is attributed to an automation that triggered at most this
@@ -97,6 +108,13 @@ const JEEP_TX = `translate(${JEEP_X} ${JEEP_Y}) scale(${JEEP_SCALE})`;
 const DOOR = { x: 226, y: 112, w: 868, h: FLOOR_Y - 112 };
 const OPENER_X = 680;
 const ROOF_Y = JEEP_Y + 54 * JEEP_SCALE;
+// Parking-assist laser: from the opener's lens to a spot on the dashboard,
+// or on along the same line to the floor when the Jeep isn't there.
+const PARK_LASER = { x1: OPENER_X - 24, y1: 48, x2: JEEP_X + 340 * JEEP_SCALE, y2: JEEP_Y + 168 * JEEP_SCALE };
+PARK_LASER.floorX = PARK_LASER.x1 + (PARK_LASER.x2 - PARK_LASER.x1) * (FLOOR_Y - PARK_LASER.y1) / (PARK_LASER.y2 - PARK_LASER.y1);
+// Arrive / leave animations, played from the sensor's last_changed so a card
+// opened mid-way joins at the right point instead of replaying.
+const MOVE_SECONDS = 4;
 
 function wheel(cx, cy) {
   const spokes = [];
@@ -136,7 +154,7 @@ function jeepSvg() {
   const body = "var(--jeep-body)";
   const flare = "var(--jeep-flare)";
   return `
-  <g class="jeep" transform="${JEEP_TX}">
+  <g class="jeep-move"><g class="jeep" transform="${JEEP_TX}">
     <ellipse cx="460" cy="402" rx="480" ry="16" fill="url(#shadowGrad)"/>
 
     <!-- frame / undercarriage -->
@@ -256,7 +274,7 @@ function jeepSvg() {
 
     ${wheel(170, 328)}
     ${wheel(712, 328)}
-  </g>`;
+  </g></g>`;
 }
 
 function garageSvg() {
@@ -307,6 +325,15 @@ function garageSvg() {
     <rect y="${FLOOR_Y}" width="${VIEW_W}" height="${VIEW_H - FLOOR_Y}" fill="url(#floorGrad)"/>
     <line x1="0" y1="${FLOOR_Y}" x2="${VIEW_W}" y2="${FLOOR_Y}" stroke="#5a5f64" stroke-width="2"/>
 
+    <!-- door safety sensors: drawn only while obstructed -->
+    <g class="safety">
+      <line class="safety-beam" x1="${DOOR.x + 4}" y1="${FLOOR_Y - 15}" x2="${DOOR.x + DOOR.w - 4}" y2="${FLOOR_Y - 15}"/>
+      <rect x="${DOOR.x - 10}" y="${FLOOR_Y - 23}" width="14" height="16" rx="3" fill="#2a2d30"/>
+      <rect x="${DOOR.x + DOOR.w - 4}" y="${FLOOR_Y - 23}" width="14" height="16" rx="3" fill="#2a2d30"/>
+      <circle class="safety-led" cx="${DOOR.x - 3}" cy="${FLOOR_Y - 15}" r="2.5"/>
+      <circle class="safety-led" cx="${DOOR.x + DOOR.w + 3}" cy="${FLOOR_Y - 15}" r="2.5"/>
+    </g>
+
     <!-- Wallbox Pulsar on the wall -->
     <g class="charger">
       <rect x="80" y="250" width="64" height="82" rx="12" fill="#151515"/>
@@ -315,11 +342,18 @@ function garageSvg() {
       <rect x="150" y="286" width="16" height="22" rx="4" fill="#151515"/>
     </g>
 
+    <!-- ceiling light (drawn when a light entity is configured) -->
+    <g class="fixture">
+      <rect x="388" y="10" width="104" height="10" rx="4" fill="#bfc3c7"/>
+      <rect class="fixture-lens" x="396" y="18" width="88" height="7" rx="3.5"/>
+    </g>
+
     <!-- garage door opener on the ceiling -->
     <rect x="${OPENER_X - 4}" y="12" width="8" height="14" fill="#2b2f33"/>
     <rect x="${OPENER_X - 46}" y="22" width="92" height="26" rx="6" fill="#c9ccd0"/>
     <rect x="${OPENER_X - 46}" y="40" width="92" height="8" rx="3" fill="#a7abb0"/>
-    <circle cx="${OPENER_X}" cy="48" r="4" fill="#25292c"/>`;
+    <circle cx="${OPENER_X}" cy="48" r="4" fill="#25292c"/>
+    <rect class="opener-warn" x="${OPENER_X - 46}" y="22" width="92" height="26" rx="6"/>`;
 }
 
 function defs() {
@@ -410,6 +444,8 @@ const ICON_PLUG = "M16,7V3H14V7H10V3H8V7C7,7 6,8 6,9V14.5L9.5,18V21H14.5V18L18,1
 
 const ICON_TIMER = "M12,20A7,7 0 0,1 5,13A7,7 0 0,1 12,6A7,7 0 0,1 19,13A7,7 0 0,1 12,20M19.03,7.39L20.45,5.97C20,5.46 19.55,5 19.04,4.56L17.62,6C16.07,4.74 14.12,4 12,4A9,9 0 0,0 3,13A9,9 0 0,0 12,22C17,22 21,17.97 21,13C21,10.88 20.26,8.93 19.03,7.39M11,14H13V8H11M15,1H9V3H15V1Z";
 const ICON_ALERT = "M13,14H11V10H13M13,18H11V16H13M1,21H23L12,2L1,21Z";
+const ICON_BOLT = "M11,15H6L13,1V9H18L11,23V15Z";
+const ICON_BLOCK = "M12,2C17.5,2 22,6.5 22,12C22,17.5 17.5,22 12,22C6.5,22 2,17.5 2,12C2,6.5 6.5,2 12,2M12,4C10.1,4 8.4,4.6 7.1,5.7L18.3,16.9C19.3,15.5 20,13.8 20,12C20,7.6 16.4,4 12,4M16.9,18.3L5.7,7.1C4.6,8.4 4,10.1 4,12C4,16.4 7.6,20 12,20C13.9,20 15.6,19.4 16.9,18.3Z";
 const ICON_HISTORY = "M13.5,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8M13,3A9,9 0 0,0 4,12H1L4.96,16.03L9,12H6A7,7 0 0,1 13,5A7,7 0 0,1 20,12A7,7 0 0,1 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,20 10.5,21 13,21A9,9 0 0,0 22,12A9,9 0 0,0 13,3Z";
 
 function parseTime(value) {
@@ -540,6 +576,40 @@ const STYLE = `
   .chip.status .dot { background: var(--glow-color, #888); }
   .hidden { display: none !important; }
 
+  /* Garage extras */
+  .safety, .fixture, .opener-warn, .park-laser, .led-front, .lightfx { display: none; }
+  .obstructed .safety { display: inline; }
+  .safety-beam { stroke: #ff3b3b; stroke-width: 4; stroke-linecap: round; animation: beamFlash .8s steps(2, jump-none) infinite; }
+  .safety-led { fill: #ff3b3b; }
+  @keyframes beamFlash { 0% { opacity: 1; } 100% { opacity: .15; } }
+  .closing-soon .opener-warn { display: inline; fill: #ffb020; animation: beamFlash .9s steps(2, jump-none) infinite; }
+  .has-light .fixture { display: inline; }
+  .fixture-lens { fill: #6b7075; }
+  .lights-on .fixture-lens { fill: #fff3d6; }
+  .lights-on .lightfx {
+    display: block; position: absolute; inset: 0; pointer-events: none; mix-blend-mode: screen;
+    background:
+      radial-gradient(ellipse 55% 75% at 36.7% 2%, rgba(255,236,196,.30), rgba(255,236,196,0) 70%),
+      radial-gradient(ellipse 45% 9% at 40% 92%, rgba(255,230,180,.16), rgba(255,230,180,0) 80%);
+  }
+  .lights-off svg.bg { filter: brightness(.55) saturate(.9); }
+  .lights-off svg.fg { filter: brightness(.8); }
+  .lights-off .led-front { display: inline; }
+  .laser-on .park-laser { display: inline; }
+  .park-laser line { stroke: #ff2a2a; stroke-width: 2; stroke-opacity: .75; }
+  .park-laser .spot { fill: #ff4a4a; }
+  .park-laser .halo { fill: #ff2a2a; opacity: .35; }
+  .arriving .jeep, .leaving .jeep { opacity: 1; }
+  .arriving .jeep-move { animation: arrive ${MOVE_SECONDS}s ease-out both; animation-delay: var(--move-delay, 0s); }
+  .leaving .jeep-move { animation: leave ${MOVE_SECONDS}s ease-in both; animation-delay: var(--move-delay, 0s); }
+  .arriving .glow, .leaving .glow { opacity: 0 !important; animation: none !important; }
+  .arriving .laser, .arriving .laser-dot, .leaving .laser, .leaving .laser-dot { display: none; }
+  @keyframes arrive { 0% { transform: translateX(820px); opacity: 0; } 12% { opacity: 1; } 100% { transform: translateX(0); opacity: 1; } }
+  @keyframes leave { 0% { transform: translateX(0); opacity: 1; } 85% { opacity: 1; } 100% { transform: translateX(820px); opacity: 0; } }
+  .auto .warn.blocked { background: rgba(255,59,59,.16); border-color: rgba(255,59,59,.6); }
+  .auto .warn.blocked .icon { fill: #ff3b3b; }
+  .chip.charge .icon { color: #ffd21f; }
+
   .auto { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
   .auto .warn {
     display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px;
@@ -563,7 +633,8 @@ const STYLE = `
     .chip { font-size: .82rem; padding: 5px 9px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .glow, .port-ring, .charger-led { animation: none !important; }
+    .glow, .port-ring, .charger-led, .safety-beam, .opener-warn, .jeep-move { animation: none !important; }
+    .leaving .jeep { opacity: 0; }
     .present:not(.glow-none) .glow.a { opacity: .75; }
   }
 `;
@@ -625,6 +696,24 @@ class Jeep4xeCard extends HTMLElement {
             { name: "last_action_automations", selector: { entity: { domain: "automation", multiple: true } } },
           ],
         },
+        {
+          type: "expandable",
+          name: "",
+          flatten: true,
+          title: "Garage extras (optional)",
+          schema: [
+            { name: "obstruction_entity", selector: { entity: { domain: "binary_sensor" } } },
+            { name: "safe_close_script", selector: { entity: { domain: "script" } } },
+            { name: "light_entity", selector: { entity: { domain: ["light", "switch"] } } },
+            { name: "laser_entity", selector: { entity: { domain: ["switch", "light"] } } },
+            { name: "arriving_entity", selector: { entity: { domain: "binary_sensor" } } },
+            { name: "leaving_entity", selector: { entity: { domain: "binary_sensor" } } },
+            { name: "charging_power_entity", selector: { entity: { domain: "sensor" } } },
+            { name: "added_energy_entity", selector: { entity: { domain: "sensor" } } },
+            { name: "added_range_entity", selector: { entity: { domain: "sensor" } } },
+            { name: "energy_price_entity", selector: { entity: { domain: ["sensor", "number", "input_number"] } } },
+          ],
+        },
       ],
       computeLabel: (s) => ({
         title: "Title (optional)",
@@ -647,6 +736,16 @@ class Jeep4xeCard extends HTMLElement {
         open_ceiling_automation: "Open-ceiling auto-close automation",
         open_ceiling_minutes: "Nominal open limit",
         last_action_automations: "Automations that move the door (for \"Last move\")",
+        obstruction_entity: "Door obstruction sensor",
+        safe_close_script: "Safe-close script (shows \"Auto-closing…\")",
+        light_entity: "Garage ceiling light",
+        laser_entity: "Parking-assist laser",
+        arriving_entity: "Vehicle arriving sensor",
+        leaving_entity: "Vehicle leaving sensor",
+        charging_power_entity: "Charging power (kW)",
+        added_energy_entity: "Session energy added (kWh)",
+        added_range_entity: "Session range added",
+        energy_price_entity: "Energy price per kWh (for cost)",
       }[s.name]),
     };
   }
@@ -697,15 +796,25 @@ class Jeep4xeCard extends HTMLElement {
             ${cordSvg()}
             <line class="laser" x1="${OPENER_X}" y1="52" x2="${OPENER_X}" y2="${ROOF_Y}"/>
             <circle class="laser-dot" cx="${OPENER_X}" cy="${ROOF_Y}" r="5"/>
+            <g class="park-laser">
+              <line x1="${PARK_LASER.x1}" y1="${PARK_LASER.y1}" x2="${PARK_LASER.x2}" y2="${PARK_LASER.y2}"/>
+              <circle class="halo" cx="${PARK_LASER.x2}" cy="${PARK_LASER.y2}" r="9"/>
+              <circle class="spot" cx="${PARK_LASER.x2}" cy="${PARK_LASER.y2}" r="4"/>
+            </g>
+            <rect class="charger-led led-front" x="90" y="262" width="44" height="56" rx="7" fill="none" stroke-width="3"/>
           </svg>
+          <div class="lightfx"></div>
         </div>
         <div class="info">
           <span class="chip distance">${icon(ICON_RULER)}<span class="label"></span><span class="value"></span><span class="dot hidden"></span><span class="park hidden"></span></span>
           <span class="chip door">${icon(ICON_GARAGE_CLOSED)}<span class="label">Door</span><span class="value"></span></span>
           <span class="chip status">${icon(ICON_PLUG)}<span class="dot"></span><span class="value"></span></span>
+          <span class="chip charge hidden">${icon(ICON_BOLT)}<span class="value"></span></span>
         </div>
         <div class="auto hidden">
-          <div class="warn hidden" role="status">${icon(ICON_ALERT)}<span>Garage automations paused</span></div>
+          <div class="warn blocked hidden" role="status">${icon(ICON_BLOCK)}<span>Door blocked (obstruction sensor)</span></div>
+          <div class="warn closing hidden" role="status">${icon(ICON_ALERT)}<span>Auto-closing…</span></div>
+          <div class="warn hold hidden" role="status">${icon(ICON_ALERT)}<span>Garage automations paused</span></div>
           <div class="auto-chips hidden">
             <span class="chip timer unload hidden">${icon(ICON_TIMER)}<span class="label">Unload mode</span><span class="value"></span></span>
             <span class="chip timer departure hidden">${icon(ICON_TIMER)}<span class="label">Departure</span><span class="value"></span></span>
@@ -726,7 +835,11 @@ class Jeep4xeCard extends HTMLElement {
       doorChip: this.shadowRoot.querySelector(".chip.door"),
       statusChip: this.shadowRoot.querySelector(".chip.status"),
       auto: this.shadowRoot.querySelector(".auto"),
-      warn: this.shadowRoot.querySelector(".auto .warn"),
+      warn: this.shadowRoot.querySelector(".auto .warn.hold"),
+      warnBlocked: this.shadowRoot.querySelector(".auto .warn.blocked"),
+      warnClosing: this.shadowRoot.querySelector(".auto .warn.closing"),
+      chargeChip: this.shadowRoot.querySelector(".chip.charge"),
+      parkLaser: this.shadowRoot.querySelector(".park-laser"),
       autoChips: this.shadowRoot.querySelector(".auto-chips"),
       unload: this.shadowRoot.querySelector(".chip.unload"),
       departure: this.shadowRoot.querySelector(".chip.departure"),
@@ -825,6 +938,7 @@ class Jeep4xeCard extends HTMLElement {
       c.show_door ? "" : "no-door",
       doorMoving && door?.attributes?.current_position == null ? "door-moving" : "",
       sun?.state === "below_horizon" ? "night" : "",
+      ...this._extrasClasses(present),
     ].filter(Boolean).join(" ");
 
     this._els.panels.style.transform = `translateY(${-DOOR.h * doorFrac * 0.97}px)`;
@@ -858,7 +972,85 @@ class Jeep4xeCard extends HTMLElement {
       ? `Jeep in garage — ${info.label}. Distance ${distText}. Door ${doorText}.`
       : `Garage empty. Distance to floor ${distText}. Door ${doorText}.`;
 
+    this._renderCharge(plugged, glow === "yellow");
     this._renderAuto();
+  }
+
+  // Scene classes for the optional extras. Entities that are missing,
+  // unknown or unavailable add nothing, and an error here never breaks the
+  // rest of the card.
+  _extrasClasses(present) {
+    try {
+      const c = this._config;
+      const on = (id) => this._avail(id)?.state === "on";
+      const out = [];
+      if (on(c.obstruction_entity)) out.push("obstructed");
+      if (on(c.safe_close_script)) out.push("closing-soon");
+      const light = this._avail(c.light_entity);
+      if (light) out.push("has-light", light.state === "on" ? "lights-on" : "lights-off");
+      if (on(c.laser_entity)) {
+        out.push("laser-on");
+        const x2 = present ? PARK_LASER.x2 : PARK_LASER.floorX;
+        const y2 = present ? PARK_LASER.y2 : FLOOR_Y - 2;
+        const laser = this._els.parkLaser;
+        laser.querySelector("line").setAttribute("x2", x2);
+        laser.querySelector("line").setAttribute("y2", y2);
+        for (const dot of laser.querySelectorAll("circle")) {
+          dot.setAttribute("cx", x2);
+          dot.setAttribute("cy", y2);
+        }
+      }
+      // Leaving wins if both are somehow on.
+      const leaving = this._avail(c.leaving_entity);
+      const arriving = this._avail(c.arriving_entity);
+      const moving = leaving?.state === "on" ? ["leaving", leaving] : arriving?.state === "on" ? ["arriving", arriving] : null;
+      if (moving) {
+        const since = parseTime(moving[1].last_changed);
+        const elapsed = since == null ? 0 : Math.max(0, (Date.now() - since) / 1000);
+        this._root.style.setProperty("--move-delay", `${-elapsed.toFixed(2)}s`);
+        out.push(moving[0]);
+      }
+      return out;
+    } catch (err) {
+      return [];
+    }
+  }
+
+  // "7.2 kW · +4.6 kWh · +24 mi · ~$0.64" while the Jeep is plugged in.
+  _renderCharge(plugged, charging) {
+    const chip = this._els.chargeChip;
+    try {
+      const c = this._config;
+      const num = (id) => {
+        const st = this._avail(id);
+        const v = st ? parseFloat(st.state) : NaN;
+        return Number.isFinite(v) ? { v, unit: st.attributes?.unit_of_measurement } : null;
+      };
+      const parts = [];
+      if (plugged) {
+        const power = num(c.charging_power_entity);
+        if (charging && power && power.v > 0) parts.push(`${power.v.toFixed(1)} ${power.unit || "kW"}`);
+        const energy = num(c.added_energy_entity);
+        if (energy) parts.push(`+${energy.v.toFixed(1)} ${energy.unit || "kWh"}`);
+        const range = num(c.added_range_entity);
+        if (range) parts.push(`+${Math.round(range.v)} ${range.unit || "mi"}`);
+        const price = num(c.energy_price_entity);
+        if (energy && price && price.v >= 0) {
+          const currency = this._hass.config?.currency || "USD";
+          let cost;
+          try {
+            cost = new Intl.NumberFormat(undefined, { style: "currency", currency }).format(energy.v * price.v);
+          } catch (e) {
+            cost = (energy.v * price.v).toFixed(2);
+          }
+          parts.push(`~${cost}`);
+        }
+      }
+      chip.classList.toggle("hidden", !parts.length);
+      chip.querySelector(".value").textContent = parts.join(" · ");
+    } catch (err) {
+      chip.classList.add("hidden");
+    }
   }
 
   // Entity state for the automation section, or null when it is missing,
@@ -893,6 +1085,8 @@ class Jeep4xeCard extends HTMLElement {
 
     const hold = this._avail(c.auto_hold_entity);
     els.warn.classList.toggle("hidden", hold?.state !== "on");
+    els.warnBlocked.classList.toggle("hidden", this._avail(c.obstruction_entity)?.state !== "on");
+    els.warnClosing.classList.toggle("hidden", this._avail(c.safe_close_script)?.state !== "on");
 
     for (const [el, entityId] of [[els.unload, c.unload_timer_entity], [els.departure, c.departure_timer_entity]]) {
       const t = this._timerText(this._avail(entityId), now);
@@ -936,7 +1130,8 @@ class Jeep4xeCard extends HTMLElement {
 
     const chipsShown = [els.unload, els.departure, els.openFor].some((el) => !el.classList.contains("hidden"));
     els.autoChips.classList.toggle("hidden", !chipsShown);
-    const anyShown = chipsShown || !els.warn.classList.contains("hidden") || !!lastMove;
+    const warnShown = [els.warn, els.warnBlocked, els.warnClosing].some((el) => !el.classList.contains("hidden"));
+    const anyShown = chipsShown || warnShown || !!lastMove;
     els.auto.classList.toggle("hidden", !anyShown);
 
     // Tick every second only while a timer is counting down; otherwise just

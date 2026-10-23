@@ -33,6 +33,8 @@
     away_open:  { vehicle: "off", charger: "Ready",                  dist: 2430, door: "open",   pos: 100 },
     open_night: { vehicle: "on",  charger: "Charging",               dist: 501,  door: "open",   pos: 100, night: true },
     automations: { vehicle: "on", charger: "Charging",               dist: 501,  door: "open",   pos: 100, auto: true },
+    extras:     { vehicle: "on",  charger: "Charging",               dist: 501,  door: "closed", pos: 0, extras: true },
+    lights_off: { vehicle: "on",  charger: "Charging",               dist: 501,  door: "closed", pos: 0, extras: true, dark: true },
   };
   const card = document.getElementById("card");
   const params = new URLSearchParams(location.search);
@@ -43,6 +45,14 @@
     departure_timer_entity: "timer.garage_ready_to_leave",
     open_ceiling_automation: "automation.garage_open_ceiling",
     last_action_automations: ["automation.garage_auto_open_carplay_zone", "automation.garage_open_ceiling"],
+    obstruction_entity: "binary_sensor.garage_garage_door_obstruction",
+    safe_close_script: "script.garage_safe_close",
+    light_entity: "light.garage_garage_light",
+    laser_entity: "switch.garage_garage_door_laser",
+    charging_power_entity: "sensor.wallbox_pikachu_charging_power",
+    added_energy_entity: "sensor.wallbox_pikachu_added_energy",
+    added_range_entity: "sensor.wallbox_pikachu_added_range",
+    energy_price_entity: "sensor.wallbox_pikachu_energy_price",
   });
 
   function hassFor(s) {
@@ -54,7 +64,21 @@
       "cover.garage_garage_door_door": st(s.door, { current_position: s.pos }),
       "sun.sun": st(s.night ? "below_horizon" : "above_horizon"),
       ...(s.auto ? automationStates() : {}),
+      ...(s.extras ? extrasStates(s.dark) : {}),
     } };
+  }
+  function extrasStates(dark) {
+    const st = (state, attributes = {}) => ({ state, attributes });
+    return {
+      "binary_sensor.garage_garage_door_obstruction": st(dark ? "off" : "on"),
+      "script.garage_safe_close": st(dark ? "off" : "on"),
+      "light.garage_garage_light": st(dark ? "off" : "on"),
+      "switch.garage_garage_door_laser": st(dark ? "off" : "on"),
+      "sensor.wallbox_pikachu_charging_power": st("7.2", { unit_of_measurement: "kW" }),
+      "sensor.wallbox_pikachu_added_energy": st("4.57", { unit_of_measurement: "kWh" }),
+      "sensor.wallbox_pikachu_added_range": st("23.6", { unit_of_measurement: "mi" }),
+      "sensor.wallbox_pikachu_energy_price": st("0.14"),
+    };
   }
   function automationStates() {
     const now = Date.now();
